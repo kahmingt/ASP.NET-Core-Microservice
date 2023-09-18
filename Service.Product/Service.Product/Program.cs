@@ -1,9 +1,63 @@
+using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
+using Service.Product.Work.Utility;
+using Service.Product.Shared.Database;
+using Service.Product.Shared.Database.Entity;
+using Service.Product.Shared.Repository;
+
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+
+#region --- SQL Connection ---
+var sqlConnectionStringBuilder = new SqlConnectionStringBuilder(
+        builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.")
+);
+sqlConnectionStringBuilder.UserID = builder.Configuration["Database:User"];
+sqlConnectionStringBuilder.Password = builder.Configuration["Database:Password"];
+
+builder.Services
+    .AddDbContext<ApplicationDbContext>(options =>
+    {
+        options.UseSqlServer(sqlConnectionStringBuilder.ConnectionString,
+            opt => opt.EnableRetryOnFailure(
+                maxRetryCount: 5,
+                maxRetryDelay: System.TimeSpan.FromSeconds(30),
+                errorNumbersToAdd: null)
+        );
+    });
+#endregion
+
+#region --- Services ---
+// Repository Wrapper
+builder.Services.AddTransient<IUnitOfWork, UnitOfWork>();
+
+//AutoMapper.Extensions.Microsoft.DependencyInjection
+builder.Services.AddAutoMapper(typeof(Program));
+
+// Operation helper
+builder.Services.AddTransient<OperationHelper<dbProduct>>();
+
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+#endregion
+
+builder.Services.AddControllers();
+
+#region --- CORS ---
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("WebApiCorsPolicy",
+        policy =>
+        {
+            policy.AllowAnyHeader();
+            policy.AllowAnyMethod();
+            policy.WithOrigins("*");
+        });
+});
+#endregion
+
 
 var app = builder.Build();
 
@@ -15,29 +69,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseCors("WebApiCorsPolicy");
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast = Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateTime.Now.AddDays(index),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast");
+app.MapControllers();
 
 app.Run();
-
-internal record WeatherForecast(DateTime Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
